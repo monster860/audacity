@@ -555,6 +555,13 @@ void ProjectAudioManager::OnRecord(bool altAppearance)
       if (rateOfSelected != RATE_NOT_SELECTED)
          options.rate = rateOfSelected;
 
+      // It does not make sense to apply the time warp during overdub recording,
+      // which defeats the purpose of making the recording synchronized with
+      // the existing audio.  (Unless we figured out the inverse warp of the
+      // captured samples in real time.)
+      // So just quietly ignore the time track.
+      options.envelope = nullptr;
+
       DoRecord(*p, transportTracks, t0, t1, altAppearance, options);
    }
 }

@@ -66,6 +66,8 @@ BEGIN_EVENT_TABLE(TranscriptionToolBar, ToolBar)
 
    EVT_COMMAND_RANGE(TTB_PlaySpeed, TTB_PlaySpeed,
                      wxEVT_COMMAND_BUTTON_CLICKED, TranscriptionToolBar::OnPlaySpeed)
+   EVT_COMMAND_RANGE(TTB_RecordSpeed, TTB_RecordSpeed,
+                     wxEVT_COMMAND_BUTTON_CLICKED, TranscriptionToolBar::OnRecordSpeed)
    EVT_SLIDER(TTB_PlaySpeedSlider, TranscriptionToolBar::OnSpeedSlider)
 
 #ifdef EXPERIMENTAL_VOICE_DETECTION
@@ -211,6 +213,17 @@ void TranscriptionToolBar::Populate()
    MakeAlternateImages(bmpLoop, bmpLoopDisabled, TTB_PlaySpeed, 1);
    MakeAlternateImages(bmpCutPreview, bmpCutPreviewDisabled, TTB_PlaySpeed, 2);
    mButtons[TTB_PlaySpeed]->FollowModifierKeys();
+   
+   AddButton(this, bmpRecord, bmpRecordDisabled, TTB_RecordSpeed, XO("Record at selected speed"));
+   MakeAlternateImages(bmpLoop, bmpLoopDisabled, TTB_RecordSpeed, 1);
+   bool bPreferNewTrack;
+   gPrefs->Read("/GUI/PreferNewTrackRecord", &bPreferNewTrack, false);
+   if (!bPreferNewTrack)
+       MakeAlternateImages(bmpRecordBelow, bmpRecordBelowDisabled, TTB_RecordSpeed, 1);
+   else
+       MakeAlternateImages(bmpRecordBeside, bmpRecordBesideDisabled, TTB_RecordSpeed, 1);
+   mButtons[TTB_RecordSpeed]->FollowModifierKeys();
+   
 
    //Add a slider that controls the speed of playback.
    const int SliderWidth=100;
@@ -336,6 +349,9 @@ void TranscriptionToolBar::RegenerateTooltips()
    // We could also mention the shift- and ctrl-modified versions in the
    // tool tip... but it would get long
 
+   bool bPreferNewTrack;
+   gPrefs->Read("/GUI/PreferNewTrackRecord", &bPreferNewTrack, false);
+
    static const struct Entry {
       int tool;
       CommandID commandName;
@@ -345,6 +361,12 @@ void TranscriptionToolBar::RegenerateTooltips()
    } table[] = {
       { TTB_PlaySpeed,   wxT("PlayAtSpeed"),    XO("Play-at-Speed"),
       wxT("PlayAtSpeedLooped"),    XO("Looped-Play-at-Speed")
+      },
+      { TTB_RecordSpeed,   wxT("RecordAtSpeed"),    XO("Record-at-Speed"),
+      wxT("RecordAtSpeed2"),
+                   !bPreferNewTrack
+                     ? XO("Record-at-Speed New Track")
+                     : XO("Append Record-at-Speed")
       },
    };
 
@@ -473,7 +495,7 @@ void TranscriptionToolBar::GetSamples(
 #define TIMETRACK_MAX 10.0
 
 // Come here from button clicks, or commands
-void TranscriptionToolBar::PlayAtSpeed(bool looped, bool cutPreview)
+void TranscriptionToolBar::PlayAtSpeed(bool looped, bool cutPreview, bool record, bool appendRecord)
 {
    // Can't do anything without an active project
    AudacityProject *p = &mProject;
@@ -492,7 +514,7 @@ void TranscriptionToolBar::PlayAtSpeed(bool looped, bool cutPreview)
 
    // Scrubbing only supports straight through play.
    // So if looped or cutPreview, we have to fall back to fixed speed.
-   bFixedSpeedPlay = bFixedSpeedPlay || looped || cutPreview;
+   bFixedSpeedPlay = bFixedSpeedPlay || looped || cutPreview || record;
    if (bFixedSpeedPlay)
    {
       // Create a BoundedEnvelope if we haven't done so already
@@ -512,6 +534,7 @@ void TranscriptionToolBar::PlayAtSpeed(bool looped, bool cutPreview)
 
    // Pop up the button
    SetButton(false, mButtons[TTB_PlaySpeed]);
+   SetButton(false, mButtons[TTB_RecordSpeed]);
 
    // If IO is busy, abort immediately
    auto gAudioIO = AudioIOBase::Get();
@@ -531,14 +554,87 @@ void TranscriptionToolBar::PlayAtSpeed(bool looped, bool cutPreview)
       options.playLooped = looped;
       // No need to set cutPreview options.
       options.envelope = mEnvelope.get();
-      auto mode =
-         cutPreview ? PlayMode::cutPreviewPlay
-         : options.playLooped ? PlayMode::loopedPlay
-         : PlayMode::normalPlay;
-      projectAudioManager.PlayPlayRegion(
-         SelectedRegion(playRegion.GetStart(), playRegion.GetEnd()),
+      if (!record)
+      {
+         auto mode =
+            cutPreview ? PlayMode::cutPreviewPlay
+            : options.playLooped ? PlayMode::loopedPlay
+            : PlayMode::normalPlay;
+         projectAudioManager.PlayPlayRegion(
+            SelectedRegion(playRegion.GetStart(), playRegion.GetEnd()),
             options,
             mode);
+      }
+      else
+      {
+         const auto& selectedRegion = ViewInfo::Get(*p).selectedRegion;
+         double t0 = selectedRegion.t0();
+         double t1 = selectedRegion.t1();
+         // When no time selection, recording duration is 'unlimited'.
+         if (t1 == t0)
+            t1 = DBL_MAX;
+
+         WaveTrackArray existingTracks;
+
+         int rateOfSelected = RATE_NOT_SELECTED;
+
+         if (appendRecord) {
+            const auto selectedTracks(GetPropertiesOfSelected(*p));
+            rateOfSelected = selectedTracks.rateOfSelected;
+            const int numberOfSelected{ selectedTracks.numberOfSelected };
+            const bool allSameRate{ selectedTracks.allSameRate };
+            const auto trackRange = TrackList::Get(*p).Any< const WaveTrack >();
+
+            // Try to find wave tracks to record into.  (If any are selected,
+            // try to choose only from them; else if wave tracks exist, may record into any.)
+            existingTracks = projectAudioManager.ChooseExistingRecordingTracks(*p, true, rateOfSelected);
+            if (!existingTracks.empty()) {
+               t0 = std::max(t0,
+                  (trackRange + &Track::IsSelected).max(&Track::GetEndTime));
+            }
+            else {
+               if (numberOfSelected > 0 && rateOfSelected != options.rate) {
+                  return;
+               }
+
+               existingTracks = projectAudioManager.ChooseExistingRecordingTracks(*p, false, options.rate);
+               t0 = std::max(t0, trackRange.max(&Track::GetEndTime));
+               // If suitable tracks still not found, will record into NEW ones,
+               // but the choice of t0 does not depend on that.
+            }
+
+            // Whether we decided on NEW tracks or not:
+            if (t1 <= selectedRegion.t0() && selectedRegion.t1() > selectedRegion.t0()) {
+               t1 = selectedRegion.t1();   // record within the selection
+            }
+            else {
+               t1 = DBL_MAX;        // record for a long, long time
+            }
+         }
+         TransportTracks transportTracks;
+         if (projectAudioManager.UseDuplex()) {
+            // Remove recording tracks from the list of tracks for duplex ("overdub")
+            // playback.
+            /* TODO: set up stereo tracks if that is how the user has set up
+             * their preferences, and choose sample format based on prefs */
+            transportTracks = projectAudioManager.GetAllPlaybackTracks(TrackList::Get(*p), false, true);
+            for (const auto& wt : existingTracks) {
+               auto end = transportTracks.playbackTracks.end();
+               auto it = std::find(transportTracks.playbackTracks.begin(), end, wt);
+               if (it != end)
+                  transportTracks.playbackTracks.erase(it);
+            }
+         }
+
+         transportTracks.captureTracks = existingTracks;
+
+         if (rateOfSelected != RATE_NOT_SELECTED)
+            options.rate = rateOfSelected;
+         
+         options.rate *= ((double)mPlaySpeed / 100.0);
+
+         projectAudioManager.DoRecord(*p, transportTracks, t0, t1, !appendRecord, options);
+      }
    }
    else
    {
@@ -557,7 +653,17 @@ void TranscriptionToolBar::OnPlaySpeed(wxCommandEvent & WXUNUSED(event))
    const bool cutPreview = mButtons[TTB_PlaySpeed]->WasControlDown();
    const bool looped = !cutPreview &&
       button->WasShiftDown();
-   PlayAtSpeed(looped, cutPreview);
+   PlayAtSpeed(looped, cutPreview, false, false);
+}
+
+void TranscriptionToolBar::OnRecordSpeed(wxCommandEvent& WXUNUSED(event))
+{
+    bool bPreferNewTrack;
+    gPrefs->Read("/GUI/PreferNewTrackRecord", &bPreferNewTrack, false);
+    auto button = mButtons[TTB_RecordSpeed];
+
+    const bool appendRecord = bPreferNewTrack == button->WasShiftDown();
+    PlayAtSpeed(false, false, true, appendRecord);
 }
 
 void TranscriptionToolBar::OnSpeedSlider(wxCommandEvent& WXUNUSED(event))

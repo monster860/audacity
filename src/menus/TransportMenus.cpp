@@ -627,6 +627,8 @@ void OnPunchAndRoll(const CommandContext &context)
    options.preRoll = std::max(0L,
       gPrefs->Read(AUDIO_PRE_ROLL_KEY, DEFAULT_PRE_ROLL_SECONDS));
    options.pCrossfadeData = &crossfadeData;
+   // Make sure time-warping is not applied
+   options.envelope = nullptr;
    bool success = ProjectAudioManager::Get( project ).DoRecord(project,
       transportTracks,
       t1, DBL_MAX,
@@ -949,7 +951,7 @@ void OnPlayAtSpeed(const CommandContext &context)
    auto tb = &TranscriptionToolBar::Get( project );
 
    if (tb) {
-      tb->PlayAtSpeed(false, false);
+      tb->PlayAtSpeed(false, false, false, false);
    }
 }
 
@@ -959,7 +961,7 @@ void OnPlayAtSpeedLooped(const CommandContext &context)
    auto tb = &TranscriptionToolBar::Get( project );
 
    if (tb) {
-      tb->PlayAtSpeed(true, false);
+      tb->PlayAtSpeed(true, false, false, false);
    }
 }
 
@@ -969,7 +971,7 @@ void OnPlayAtSpeedCutPreview(const CommandContext &context)
    auto tb = &TranscriptionToolBar::Get( project );
 
    if (tb) {
-      tb->PlayAtSpeed(false, true);
+      tb->PlayAtSpeed(false, true, false, false);
    }
 }
 

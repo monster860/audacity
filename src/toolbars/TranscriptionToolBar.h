@@ -42,6 +42,7 @@ class VoiceKey;
 enum
 {
    TTB_PlaySpeed,
+   TTB_RecordSpeed,
    TTB_PlaySpeedSlider,
 
 #ifdef EXPERIMENTAL_VOICE_DETECTION
@@ -75,6 +76,7 @@ class TranscriptionToolBar final : public ToolBar {
 
    void OnKeyEvent(wxKeyEvent & event);
    void OnPlaySpeed(wxCommandEvent & event);
+   void OnRecordSpeed(wxCommandEvent& event);
    void OnSpeedSlider(wxCommandEvent & event);
 
    void Populate() override;
@@ -110,7 +112,7 @@ class TranscriptionToolBar final : public ToolBar {
    void SetKeyType(wxCommandEvent & event);
 #endif
 
-   void PlayAtSpeed(bool looped, bool cutPreview);
+   void PlayAtSpeed(bool looped, bool cutPreview, bool record, bool appendRecord);
    void ShowPlaySpeedDialog();
    void AdjustPlaySpeed(float adj);
 

@@ -384,15 +384,7 @@ void AudioIOBase::PlaybackSchedule::Init(
    const AudioIOStartStreamOptions &options,
    const RecordingSchedule *pRecordingSchedule )
 {
-   if ( pRecordingSchedule )
-      // It does not make sense to apply the time warp during overdub recording,
-      // which defeats the purpose of making the recording synchronized with
-      // the existing audio.  (Unless we figured out the inverse warp of the
-      // captured samples in real time.)
-      // So just quietly ignore the time track.
-      mEnvelope = nullptr;
-   else
-      mEnvelope = options.envelope;
+   mEnvelope = options.envelope;
 
    mT0      = t0;
    if (pRecordingSchedule)
